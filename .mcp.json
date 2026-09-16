@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "umami": {
-      "command": "bunx",
-      "args": ["@climactic/umami-mcp"],
+      "command": "bun",
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/index.ts"],
       "env": {
         "UMAMI_API_KEY": "${UMAMI_API_KEY}",
         "UMAMI_BASE_URL": "${UMAMI_BASE_URL}",

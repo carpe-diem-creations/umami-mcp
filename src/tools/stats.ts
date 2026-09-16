@@ -4,35 +4,15 @@ import {
   dateRangeShape,
   filtersShape,
   makeWebsiteIdArg,
+  METRIC_TYPES,
+  normalizeFilters,
+  normalizeMetricType,
   resolveWebsiteId,
   unitShape,
   type ToolDef,
   type ToolModule,
 } from "./_helpers";
 import { formatJson, toolText } from "../format";
-
-const METRIC_TYPES = [
-  "url",
-  "referrer",
-  "title",
-  "query",
-  "event",
-  "host",
-  "os",
-  "browser",
-  "device",
-  "country",
-  "region",
-  "city",
-  "language",
-  "screen",
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_content",
-  "utm_term",
-  "tag",
-] as const;
 
 export const statsTools: ToolModule = (ctx) => {
   const get = async (
@@ -44,7 +24,7 @@ export const statsTools: ToolModule = (ctx) => {
     const data = await ctx.client.request(
       "GET",
       `/websites/${id}/${suffix}`,
-      { query: query as never },
+      { query: normalizeFilters(query) as never },
     );
     return toolText(formatJson(data));
   };
@@ -79,7 +59,7 @@ export const statsTools: ToolModule = (ctx) => {
     def({
       name: "umami_get_metrics",
       description:
-        "Top N by dimension (url, referrer, browser, os, device, country, event, etc). Use for 'top pages', 'top referrers', etc.",
+        "Top N by dimension (path, referrer, browser, os, device, country, event, etc). Use for 'top pages', 'top referrers', etc. v2 names (url, host, utm_source) are accepted and translated.",
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateRangeShape,
@@ -90,8 +70,8 @@ export const statsTools: ToolModule = (ctx) => {
         offset: z.number().int().nonnegative().optional(),
         ...filtersShape,
       },
-      handler: async ({ websiteId, ...rest }) =>
-        get(websiteId, "metrics", rest),
+      handler: async ({ websiteId, type, ...rest }) =>
+        get(websiteId, "metrics", { ...rest, type: normalizeMetricType(type) }),
     }),
     def({
       name: "umami_get_active_users",
