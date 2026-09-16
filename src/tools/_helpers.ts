@@ -122,13 +122,17 @@ export const paginationShape = {
   search: z.string().optional().describe("Search query."),
 };
 
+/// Filter keys accepted by the Umami v3 API (`filterParams` in src/lib/schema.ts).
+/// `url` and `host` are the v2 spellings and are translated by `normalizeFilters`.
 export const filtersShape = {
-  url: z.string().optional(),
+  path: z.string().optional().describe("URL path filter (v2 name: url)."),
+  url: z.string().optional().describe("Deprecated alias of `path`."),
   referrer: z.string().optional(),
   title: z.string().optional(),
   query: z.string().optional(),
   event: z.string().optional(),
-  host: z.string().optional(),
+  hostname: z.string().optional().describe("Hostname filter (v2 name: host)."),
+  host: z.string().optional().describe("Deprecated alias of `hostname`."),
   os: z.string().optional(),
   browser: z.string().optional(),
   device: z.string().optional(),
@@ -136,13 +140,81 @@ export const filtersShape = {
   region: z.string().optional(),
   city: z.string().optional(),
   language: z.string().optional(),
+  distinctId: z.string().optional(),
   utmSource: z.string().optional(),
   utmMedium: z.string().optional(),
   utmCampaign: z.string().optional(),
   utmContent: z.string().optional(),
   utmTerm: z.string().optional(),
   tag: z.string().optional(),
+  segment: z.string().optional(),
+  cohort: z.string().optional(),
 };
+
+/// v2 → v3 key renames applied to every query/filter object before it is sent.
+const LEGACY_KEYS: Record<string, string> = {
+  url: "path",
+  host: "hostname",
+  utm_source: "utmSource",
+  utm_medium: "utmMedium",
+  utm_campaign: "utmCampaign",
+  utm_content: "utmContent",
+  utm_term: "utmTerm",
+};
+
+export function normalizeFilters<T extends Record<string, unknown>>(
+  query: T,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined) continue;
+    const key = LEGACY_KEYS[k] ?? k;
+    if (!(key in out)) out[key] = v;
+  }
+  return out;
+}
+
+/// Metric dimension names accepted by v3 (`EVENT_COLUMNS` + `SESSION_COLUMNS`),
+/// plus the v2 spellings which `normalizeMetricType` maps onto them.
+export const METRIC_TYPES = [
+  "path",
+  "fullPath",
+  "entry",
+  "exit",
+  "referrer",
+  "domain",
+  "title",
+  "query",
+  "event",
+  "tag",
+  "hostname",
+  "utmSource",
+  "utmMedium",
+  "utmCampaign",
+  "utmContent",
+  "utmTerm",
+  "browser",
+  "os",
+  "device",
+  "screen",
+  "language",
+  "country",
+  "city",
+  "region",
+  "distinctId",
+  "channel",
+  // v2 spellings, kept so older prompts keep working
+  "url",
+  "host",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_content",
+  "utm_term",
+] as const;
+
+export const normalizeMetricType = (type: string): string =>
+  LEGACY_KEYS[type] ?? type;
 
 export const unitShape = {
   unit: z

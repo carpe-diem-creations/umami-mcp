@@ -144,6 +144,22 @@ describe("stats tools", () => {
     expect(url.searchParams.get("endAt")).toBe("2000");
   });
 
+  test("umami_get_metrics translates v2 `url` to v3 `path`", async () => {
+    stub = install();
+    stub.queue([]);
+    const tools = statsTools(makeCtx("s"));
+    await parseAndCall(findTool(tools, "umami_get_metrics"), {
+      startAt: 1,
+      endAt: 2,
+      type: "url",
+      host: "ios.example",
+    });
+    const url = new URL(stub.calls[0]!.url);
+    expect(url.searchParams.get("type")).toBe("path");
+    expect(url.searchParams.get("hostname")).toBe("ios.example");
+    expect(url.searchParams.has("host")).toBe(false);
+  });
+
   test("umami_get_metrics passes type enum", async () => {
     stub = install();
     stub.queue([]);
@@ -151,9 +167,9 @@ describe("stats tools", () => {
     await parseAndCall(findTool(tools, "umami_get_metrics"), {
       startAt: 0,
       endAt: 1,
-      type: "url",
+      type: "path",
     });
-    expect(new URL(stub.calls[0]!.url).searchParams.get("type")).toBe("url");
+    expect(new URL(stub.calls[0]!.url).searchParams.get("type")).toBe("path");
   });
 });
 
@@ -214,7 +230,59 @@ describe("reports tools", () => {
     const call = stub.calls[0]!;
     expect(new URL(call.url).pathname).toBe("/v1/reports/funnel");
     expect(call.init?.method).toBe("POST");
-    expect(JSON.parse(call.init?.body as string).websiteId).toBe("s");
+    const body = JSON.parse(call.init?.body as string);
+    expect(body).toEqual({
+      websiteId: "s",
+      type: "funnel",
+      filters: {},
+      parameters: {
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+        window: 60,
+        steps: [
+          { type: "path", value: "/" },
+          { type: "path", value: "/checkout" },
+        ],
+      },
+    });
+  });
+
+  test("umami_report_goal nests parameters and lifts website filters", async () => {
+    stub = install();
+    stub.queue({});
+    const tools = reportTools(makeCtx("s"));
+    await parseAndCall(findTool(tools, "umami_report_goal"), {
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      type: "event",
+      value: "signup",
+      url: "/onboarding",
+    });
+    const body = JSON.parse(stub.calls[0]!.init?.body as string);
+    expect(body.type).toBe("goal");
+    expect(body.parameters).toEqual({
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      type: "event",
+      value: "signup",
+    });
+    expect(body.filters).toEqual({ path: "/onboarding" });
+  });
+
+  test("umami_report_attribution maps camelCase model to v3 kebab-case", async () => {
+    stub = install();
+    stub.queue({});
+    const tools = reportTools(makeCtx("s"));
+    await parseAndCall(findTool(tools, "umami_report_attribution"), {
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      model: "firstClick",
+      type: "url",
+      step: "/checkout",
+    });
+    const body = JSON.parse(stub.calls[0]!.init?.body as string);
+    expect(body.parameters.model).toBe("first-click");
+    expect(body.parameters.type).toBe("path");
   });
 
   test("umami_list_reports passes websiteId + type as query", async () => {

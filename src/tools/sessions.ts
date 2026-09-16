@@ -3,6 +3,7 @@ import {
   def,
   dateRangeShape,
   makeWebsiteIdArg,
+  normalizeFilters,
   paginationShape,
   resolveWebsiteId,
   type ToolDef,
@@ -20,7 +21,7 @@ export const sessionTools: ToolModule = (ctx) => {
     const data = await ctx.client.request(
       "GET",
       `/websites/${id}/${suffix}`,
-      { query: query as never },
+      { query: normalizeFilters(query) as never },
     );
     return toolText(formatJson(data));
   };

@@ -14,6 +14,8 @@
 
 An MCP server for [Umami Analytics](https://umami.is) that gives Claude (and any MCP-compatible client) full read/write access to your analytics data. Works with both Umami Cloud and self-hosted instances.
 
+> **Fork note (carpe-diem-creations/umami-mcp):** this fork targets the **Umami v3 API** (tested against self-hosted 3.3.1). Compared with upstream 0.1.x: report tools send the v3 `{ websiteId, type, filters, parameters }` envelope, funnel/goal/attribution steps use `path` instead of `url`, metrics and filters use the v3 dimension names (`path`, `hostname`, `utmSource`, ...), and the v2 spellings (`url`, `host`, `utm_source`) are still accepted and translated. Run it from a checkout with `bun run index.ts` (see the plugin `.mcp.json`).
+
 48 tools covering websites, stats, pageviews, metrics, sessions, events, reports (funnel, retention, goals, journey, attribution, UTM, revenue, performance, breakdown), teams, and user admin.
 
 ## Install
@@ -99,7 +101,7 @@ Set one of these env var combinations:
 
 - `umami_get_stats` — Aggregate stats (pageviews, visitors, bounces, time)
 - `umami_get_pageviews` — Pageviews + sessions time series
-- `umami_get_metrics` — Top N by dimension (url, referrer, browser, os, country, event, ...)
+- `umami_get_metrics` — Top N by dimension (path, referrer, browser, os, country, event, ...; v2 names accepted)
 - `umami_get_active_users` — Active users right now
 - `umami_get_realtime` — Last-30-minute realtime data
 - `umami_get_daterange` — Earliest/latest data timestamps

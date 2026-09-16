@@ -4,6 +4,7 @@ import {
   dateRangeShape,
   filtersShape,
   makeWebsiteIdArg,
+  normalizeFilters,
   paginationShape,
   resolveWebsiteId,
   type ToolDef,
@@ -21,7 +22,7 @@ export const eventTools: ToolModule = (ctx) => {
     const data = await ctx.client.request(
       "GET",
       `/websites/${id}/${suffix}`,
-      { query: query as never },
+      { query: normalizeFilters(query) as never },
     );
     return toolText(formatJson(data));
   };

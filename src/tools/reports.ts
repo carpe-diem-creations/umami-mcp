@@ -1,7 +1,9 @@
 import { z } from "zod";
 import {
   def,
+  filtersShape,
   makeWebsiteIdArg,
+  normalizeFilters,
   resolveWebsiteId,
   type ToolDef,
   type ToolModule,
@@ -15,22 +17,78 @@ const dateStringShape = {
   endDate: z.string(),
 };
 
-const funnelStep = z.object({
-  type: z.enum(["url", "event"]),
+/// Umami v3 spells the pageview step type `path`; `url` is the v2 name.
+const stepType = z
+  .enum(["path", "url", "event"])
+  .transform((t) => (t === "url" ? "path" : t));
+
+const stepFilter = z.object({
+  property: z.string().min(1),
+  operator: z.enum(["eq", "neq", "c", "dnc"]),
   value: z.string(),
 });
 
+const funnelStep = z.object({
+  type: stepType,
+  value: z.string(),
+  filters: z.array(stepFilter).optional(),
+});
+
+/// Fields accepted by the v3 breakdown report (`fieldsParam`).
+const BREAKDOWN_FIELDS = [
+  "path",
+  "referrer",
+  "title",
+  "query",
+  "os",
+  "browser",
+  "device",
+  "country",
+  "region",
+  "city",
+  "tag",
+  "hostname",
+  "distinctId",
+  "language",
+  "event",
+  "utmSource",
+  "utmMedium",
+  "utmCampaign",
+  "utmContent",
+  "utmTerm",
+] as const;
+
 export const reportTools: ToolModule = (ctx) => {
+  /// Umami v3 report bodies are `{ websiteId, type, filters, parameters }`
+  /// (`reportResultSchema`); v2 accepted the parameters flat at the top level.
   const runReport = async (
     type: string,
     websiteId: string | undefined,
-    extra: Record<string, unknown>,
+    parameters: Record<string, unknown>,
+    filters: Record<string, unknown> = {},
   ) => {
     const id = resolveWebsiteId(websiteId, ctx.defaultWebsiteId);
     const data = await ctx.client.request("POST", `/reports/${type}`, {
-      body: { websiteId: id, ...extra },
+      body: {
+        websiteId: id,
+        type,
+        filters: normalizeFilters(filters),
+        parameters,
+      },
     });
     return toolText(formatJson(data));
+  };
+
+  /// Splits tool args into report parameters and the shared website filters.
+  const split = (args: Record<string, unknown>) => {
+    const filters: Record<string, unknown> = {};
+    const parameters: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (v === undefined) continue;
+      if (k in filtersShape) filters[k] = v;
+      else parameters[k] = v;
+    }
+    return { parameters, filters };
   };
 
   const tools: ToolDef[] = [
@@ -70,19 +128,23 @@ export const reportTools: ToolModule = (ctx) => {
     }),
     def({
       name: "umami_report_funnel",
-      description: "Funnel conversion report across an ordered set of steps.",
+      description:
+        "Funnel conversion report across an ordered set of steps (2 to 8). Step type is `path` (a URL path) or `event` (a custom event name); `url` is accepted as an alias of `path`. Returns unique visitors per step.",
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
-        steps: z.array(funnelStep).min(2),
+        steps: z.array(funnelStep).min(2).max(8),
         window: z
           .number()
           .int()
           .positive()
           .describe("Conversion window in minutes."),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("funnel", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("funnel", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_retention",
@@ -91,34 +153,50 @@ export const reportTools: ToolModule = (ctx) => {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
         timezone: z.string().optional(),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("retention", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("retention", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_goal",
-      description: "Goal tracking report.",
+      description:
+        "Goal tracking report: how many visitors reached a path or fired an event.",
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
-        type: z.enum(["url", "event"]).describe("Goal type."),
+        type: stepType.describe("Goal type: `path` or `event`."),
         value: z.string().describe("URL path or event name."),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("goal", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("goal", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_journey",
-      description: "User journey report between start and end steps.",
+      description: "User journey report between optional start and end steps.",
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
-        steps: z.number().int().positive(),
-        startStep: z.string(),
-        endStep: z.string(),
+        steps: z.number().int().min(2).max(7),
+        startStep: z.string().optional(),
+        endStep: z.string().optional(),
+        eventType: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("1 = pageviews, 2 = custom events."),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("journey", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("journey", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_attribution",
@@ -127,13 +205,20 @@ export const reportTools: ToolModule = (ctx) => {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
         model: z
-          .enum(["firstClick", "lastClick"])
+          .enum(["first-click", "last-click", "firstClick", "lastClick"])
+          .transform((m) =>
+            m === "firstClick" ? "first-click" : m === "lastClick" ? "last-click" : m,
+          )
           .describe("Attribution model."),
-        type: z.string(),
+        type: stepType.describe("Step type: `path` or `event`."),
         step: z.string(),
+        currency: z.string().length(3).optional(),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("attribution", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("attribution", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_utm",
@@ -141,9 +226,12 @@ export const reportTools: ToolModule = (ctx) => {
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("utm", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("utm", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_revenue",
@@ -152,10 +240,15 @@ export const reportTools: ToolModule = (ctx) => {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
         currency: z.string().length(3).describe("ISO 4217 currency code."),
-        compare: z.string().optional(),
+        unit: z.enum(["hour", "day", "month", "year"]).optional(),
+        timezone: z.string().optional(),
+        compare: z.enum(["prev", "yoy"]).optional(),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("revenue", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("revenue", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_performance",
@@ -163,10 +256,15 @@ export const reportTools: ToolModule = (ctx) => {
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
-        metric: z.string().optional(),
+        metric: z.enum(["lcp", "inp", "cls", "fcp", "ttfb"]).optional(),
+        unit: z.enum(["hour", "day", "month", "year"]).optional(),
+        timezone: z.string().optional(),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("performance", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("performance", websiteId, parameters, filters);
+      },
     }),
     def({
       name: "umami_report_breakdown",
@@ -174,10 +272,13 @@ export const reportTools: ToolModule = (ctx) => {
       inputSchema: {
         websiteId: makeWebsiteIdArg(),
         ...dateStringShape,
-        fields: z.array(z.string()).min(1),
+        fields: z.array(z.enum(BREAKDOWN_FIELDS)).min(1),
+        ...filtersShape,
       },
-      handler: async ({ websiteId, ...extra }) =>
-        runReport("breakdown", websiteId, extra),
+      handler: async ({ websiteId, ...args }) => {
+        const { parameters, filters } = split(args);
+        return runReport("breakdown", websiteId, parameters, filters);
+      },
     }),
   ];
   return tools;
